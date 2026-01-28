@@ -1,37 +1,79 @@
 import streamlit as st
-from t2i_utils import load_model, generate_image
+import torch
+from diffusers import StableDiffusionPipeline
+from PIL import Image
+import uuid
+import os
 
-st.set_page_config(page_title="Text to Image Generator", layout="centered")
+# -------------------------------------------------
+# Page config
+# -------------------------------------------------
+st.set_page_config(
+    page_title="🖼️ Text to Image Generator (CPU)",
+    layout="centered"
+)
 
 st.title("🖼️ Text to Image Generator")
-st.write("Generate images from text using Stable Diffusion (CPU, Free)")
+st.caption("Stable Diffusion • CPU only • Free tier friendly")
 
-# Sidebar controls
+# -------------------------------------------------
+# Load model safely (cached, CPU only)
+# -------------------------------------------------
+@st.cache_resource
+def load_model():
+    model_id = "runwayml/stable-diffusion-v1-5"
+
+    pipe = StableDiffusionPipeline.from_pretrained(
+        model_id,
+        torch_dtype=torch.float32,
+        safety_checker=None,
+        requires_safety_checker=False
+    )
+
+    pipe = pipe.to("cpu")
+    return pipe
+
+
+pipe = load_model()
+
+# -------------------------------------------------
+# UI controls
+# -------------------------------------------------
 with st.sidebar:
     st.header("⚙️ Settings")
-    steps = st.slider("Inference Steps", 10, 50, 25)
-    guidance = st.slider("Guidance Scale", 1.0, 15.0, 7.5)
+    steps = st.slider("Inference Steps", 10, 20, 12)
+    guidance = st.slider("Guidance Scale", 1.0, 8.0, 7.0)
 
 prompt = st.text_area(
     "✍️ Enter your prompt",
     placeholder="A futuristic city at sunset, ultra realistic, 4k"
 )
 
-generate_btn = st.button("🚀 Generate Image")
+generate = st.button("🚀 Generate Image")
 
-@st.cache_resource
-def get_pipe():
-    return load_model()
-
-if generate_btn:
+# -------------------------------------------------
+# Inference
+# -------------------------------------------------
+if generate:
     if not prompt.strip():
-        st.warning("Please enter a prompt.")
+        st.warning("Please enter a text prompt.")
     else:
-        with st.spinner("Loading model (first time may take a minute)..."):
-            pipe = get_pipe()
+        with st.spinner("Generating image on CPU... Please wait ⏳"):
+            try:
+                image = pipe(
+                    prompt,
+                    num_inference_steps=steps,
+                    guidance_scale=guidance
+                ).images[0]
 
-        with st.spinner("Generating image... please wait"):
-            image = generate_image(pipe, prompt, steps, guidance)
+                # Save locally
+                os.makedirs("outputs", exist_ok=True)
+                filename = f"outputs/{uuid.uuid4().hex}.png"
+                image.save(filename)
 
-        st.success("Done!")
-        st.image(image, caption="Generated Image", use_column_width=True)
+                st.success("Image generated successfully!")
+                st.image(image, caption=prompt, use_column_width=True)
+
+            except RuntimeError as e:
+                st.error("Generation failed due to memory limits.")
+                st.code(str(e))
